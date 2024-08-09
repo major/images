@@ -196,14 +196,6 @@
       "ami"
     ]
   },
-  "./configs/oscap-rhel8-with-xml-tailoring.json": {
-    "distros": [
-      "rhel-8.10"
-    ],
-    "image-types": [
-      "ami"
-    ]
-  },
   "./configs/oscap-rhel9.json": {
     "distros": [
       "rhel-9.4"
@@ -212,7 +204,7 @@
       "ami"
     ]
   },
-  "./configs/oscap-rhel9-with-xml-tailoring.json": {
+  "./configs/oscap-rhel9-with-json-tailoring.json": {
     "distros": [
       "rhel-9.4"
     ],
@@ -285,6 +277,33 @@
       "rhel-9.2",
       "rhel-9.3",
       "rhel-9.4"
+    ]
+  },
+  "./configs/import-rpm-gpg-keys-from-tree-rhel.json": {
+    "image-types": [
+      "qcow2"
+    ],
+    "distros": [
+      "rhel-8.10",
+      "rhel-9.5"
+    ]
+  },
+  "./configs/import-rpm-gpg-keys-from-tree-fedora.json": {
+    "image-types": [
+      "qcow2"
+    ],
+    "distros": [
+      "fedora*"
+    ]
+  },
+  "./configs/rhsm.json": {
+    "image-types": [
+      "qcow2"
+    ],
+    "distros": [
+      "rhel-8.10",
+      "rhel-9.5",
+      "rhel-10.0"
     ]
   }
 }

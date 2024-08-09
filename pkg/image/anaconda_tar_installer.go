@@ -10,6 +10,7 @@ import (
 	"github.com/osbuild/images/internal/workload"
 	"github.com/osbuild/images/pkg/arch"
 	"github.com/osbuild/images/pkg/artifact"
+	"github.com/osbuild/images/pkg/customizations/anaconda"
 	"github.com/osbuild/images/pkg/customizations/kickstart"
 	"github.com/osbuild/images/pkg/disk"
 	"github.com/osbuild/images/pkg/manifest"
@@ -68,8 +69,13 @@ type AnacondaTarInstaller struct {
 
 	AdditionalKernelOpts      []string
 	AdditionalAnacondaModules []string
+	DisabledAnacondaModules   []string
 	AdditionalDracutModules   []string
 	AdditionalDrivers         []string
+
+	// Uses the old, deprecated, Anaconda config option "kickstart-modules".
+	// Only for RHEL 8.
+	UseLegacyAnacondaConfig bool
 }
 
 func NewAnacondaTarInstaller() *AnacondaTarInstaller {
@@ -125,13 +131,16 @@ func (img *AnacondaTarInstaller) InstantiateManifest(m *manifest.Manifest,
 	}
 	anacondaPipeline.Variant = img.Variant
 	anacondaPipeline.Biosdevname = (img.Platform.GetArch() == arch.ARCH_X86_64)
+
+	anacondaPipeline.UseLegacyAnacondaConfig = img.UseLegacyAnacondaConfig
 	anacondaPipeline.AdditionalAnacondaModules = img.AdditionalAnacondaModules
 	if img.OSCustomizations.FIPS {
 		anacondaPipeline.AdditionalAnacondaModules = append(
 			anacondaPipeline.AdditionalAnacondaModules,
-			"org.fedoraproject.Anaconda.Modules.Security",
+			anaconda.ModuleSecurity,
 		)
 	}
+	anacondaPipeline.DisabledAnacondaModules = img.DisabledAnacondaModules
 	anacondaPipeline.AdditionalDracutModules = img.AdditionalDracutModules
 	anacondaPipeline.AdditionalDrivers = img.AdditionalDrivers
 

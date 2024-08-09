@@ -8,6 +8,7 @@ import (
 	"github.com/osbuild/images/pkg/arch"
 	"github.com/osbuild/images/pkg/artifact"
 	"github.com/osbuild/images/pkg/container"
+	"github.com/osbuild/images/pkg/customizations/anaconda"
 	"github.com/osbuild/images/pkg/customizations/kickstart"
 	"github.com/osbuild/images/pkg/manifest"
 	"github.com/osbuild/images/pkg/osbuild"
@@ -31,18 +32,24 @@ type AnacondaContainerInstaller struct {
 	Release   string
 	Preview   bool
 
-	ContainerSource container.SourceSpec
+	ContainerSource           container.SourceSpec
+	ContainerRemoveSignatures bool
 
 	Filename string
 
 	AdditionalDracutModules   []string
 	AdditionalAnacondaModules []string
+	DisabledAnacondaModules   []string
 	AdditionalDrivers         []string
 	FIPS                      bool
 
 	Kickstart *kickstart.Options
 
 	UseRHELLoraxTemplates bool
+
+	// Uses the old, deprecated, Anaconda config option "kickstart-modules".
+	// Only for RHEL 8.
+	UseLegacyAnacondaConfig bool
 }
 
 func NewAnacondaContainerInstaller(container container.SourceSpec, ref string) *AnacondaContainerInstaller {
@@ -72,6 +79,7 @@ func (img *AnacondaContainerInstaller) InstantiateManifest(m *manifest.Manifest,
 	)
 
 	anacondaPipeline.UseRHELLoraxTemplates = img.UseRHELLoraxTemplates
+	anacondaPipeline.UseLegacyAnacondaConfig = img.UseLegacyAnacondaConfig
 
 	anacondaPipeline.ExtraPackages = img.ExtraBasePackages.Include
 	anacondaPipeline.ExcludePackages = img.ExtraBasePackages.Exclude
@@ -81,10 +89,11 @@ func (img *AnacondaContainerInstaller) InstantiateManifest(m *manifest.Manifest,
 	anacondaPipeline.Checkpoint()
 	anacondaPipeline.AdditionalDracutModules = img.AdditionalDracutModules
 	anacondaPipeline.AdditionalAnacondaModules = img.AdditionalAnacondaModules
+	anacondaPipeline.DisabledAnacondaModules = img.DisabledAnacondaModules
 	if img.FIPS {
 		anacondaPipeline.AdditionalAnacondaModules = append(
 			anacondaPipeline.AdditionalAnacondaModules,
-			"org.fedoraproject.Anaconda.Modules.Security",
+			anaconda.ModuleSecurity,
 		)
 	}
 	anacondaPipeline.AdditionalDrivers = img.AdditionalDrivers
@@ -121,6 +130,7 @@ func (img *AnacondaContainerInstaller) InstantiateManifest(m *manifest.Manifest,
 
 	// For ostree installers, always put the kickstart file in the root of the ISO
 	isoTreePipeline.PayloadPath = "/container"
+	isoTreePipeline.PayloadRemoveSignatures = img.ContainerRemoveSignatures
 
 	isoTreePipeline.ContainerSource = &img.ContainerSource
 	isoTreePipeline.ISOLinux = isoLinuxEnabled

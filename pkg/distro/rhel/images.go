@@ -7,11 +7,13 @@ import (
 	"github.com/osbuild/images/internal/workload"
 	"github.com/osbuild/images/pkg/blueprint"
 	"github.com/osbuild/images/pkg/container"
+	"github.com/osbuild/images/pkg/customizations/anaconda"
 	"github.com/osbuild/images/pkg/customizations/fdo"
 	"github.com/osbuild/images/pkg/customizations/fsnode"
 	"github.com/osbuild/images/pkg/customizations/ignition"
 	"github.com/osbuild/images/pkg/customizations/kickstart"
 	"github.com/osbuild/images/pkg/customizations/oscap"
+	"github.com/osbuild/images/pkg/customizations/subscription"
 	"github.com/osbuild/images/pkg/customizations/users"
 	"github.com/osbuild/images/pkg/distro"
 	"github.com/osbuild/images/pkg/image"
@@ -58,6 +60,10 @@ func osCustomizations(
 	osc.Containers = containers
 
 	osc.GPGKeyFiles = imageConfig.GPGKeyFiles
+	if rpm := c.GetRPM(); rpm != nil && rpm.ImportKeys != nil {
+		osc.GPGKeyFiles = append(osc.GPGKeyFiles, rpm.ImportKeys.Files...)
+	}
+
 	if imageConfig.ExcludeDocs != nil {
 		osc.ExcludeDocs = *imageConfig.ExcludeDocs
 	}
@@ -210,17 +216,29 @@ func osCustomizations(
 		}
 		osc.Directories = append(osc.Directories, oscapDataNode)
 
-		remediationConfig, tailoringConfig, err := oscap.NewConfigs(*oscapConfig, imageConfig.DefaultOSCAPDatastream)
+		remediationConfig, err := oscap.NewConfigs(*oscapConfig, imageConfig.DefaultOSCAPDatastream)
 		if err != nil {
 			panic(fmt.Errorf("error creating OpenSCAP configs: %w", err))
 		}
 
-		osc.OpenSCAPTailorConfig = tailoringConfig
 		osc.OpenSCAPRemediationConfig = remediationConfig
 	}
 
-	osc.ShellInit = imageConfig.ShellInit
+	var subscriptionStatus subscription.RHSMStatus
+	if options.Subscription != nil {
+		subscriptionStatus = subscription.RHSMConfigWithSubscription
+	} else {
+		subscriptionStatus = subscription.RHSMConfigNoSubscription
+	}
+	if rhsmConfig, exists := imageConfig.RHSMConfig[subscriptionStatus]; exists {
+		osc.RHSMConfig = rhsmConfig
+	}
 
+	if bpRhsmConfig := subscription.RHSMConfigFromBP(c.GetRHSM()); bpRhsmConfig != nil {
+		osc.RHSMConfig = osc.RHSMConfig.Update(bpRhsmConfig)
+	}
+
+	osc.ShellInit = imageConfig.ShellInit
 	osc.Grub2Config = imageConfig.Grub2Config
 	osc.Sysconfig = imageConfig.Sysconfig
 	osc.SystemdLogind = imageConfig.SystemdLogind
@@ -240,7 +258,6 @@ func osCustomizations(
 	osc.SshdConfig = imageConfig.SshdConfig
 	osc.AuthConfig = imageConfig.Authconfig
 	osc.PwQuality = imageConfig.PwQuality
-	osc.RHSMConfig = imageConfig.RHSMConfig
 	osc.Subscription = options.Subscription
 	osc.WAAgentConfig = imageConfig.WAAgentConfig
 	osc.UdevRules = imageConfig.UdevRules
@@ -451,6 +468,11 @@ func EdgeInstallerImage(workload workload.Workload,
 	img.Platform = t.platform
 	img.ExtraBasePackages = packageSets[InstallerPkgsKey]
 
+	if t.Arch().Distro().Releasever() == "8" {
+		// NOTE: RHEL 8 only supports the older Anaconda configs
+		img.UseLegacyAnacondaConfig = true
+	}
+
 	img.Kickstart, err = kickstart.New(customizations)
 	if err != nil {
 		return nil, err
@@ -476,9 +498,18 @@ func EdgeInstallerImage(workload workload.Workload,
 		img.AdditionalDrivers = installerConfig.AdditionalDrivers
 	}
 
+	instCust, err := customizations.GetInstaller()
+	if err != nil {
+		return nil, err
+	}
+	if instCust != nil && instCust.Modules != nil {
+		img.AdditionalAnacondaModules = append(img.AdditionalAnacondaModules, instCust.Modules.Enable...)
+		img.DisabledAnacondaModules = append(img.DisabledAnacondaModules, instCust.Modules.Disable...)
+	}
+
 	if len(img.Kickstart.Users)+len(img.Kickstart.Groups) > 0 {
 		// only enable the users module if needed
-		img.AdditionalAnacondaModules = []string{"org.fedoraproject.Anaconda.Modules.Users"}
+		img.AdditionalAnacondaModules = append(img.AdditionalAnacondaModules, anaconda.ModuleUsers)
 	}
 
 	img.ISOLabel, err = t.ISOLabel()
@@ -640,6 +671,11 @@ func ImageInstallerImage(workload workload.Workload,
 
 	img.ExtraBasePackages = packageSets[InstallerPkgsKey]
 
+	if t.Arch().Distro().Releasever() == "8" {
+		// NOTE: RHEL 8 only supports the older Anaconda configs
+		img.UseLegacyAnacondaConfig = true
+	}
+
 	img.Kickstart, err = kickstart.New(customizations)
 	if err != nil {
 		return nil, err
@@ -658,7 +694,15 @@ func ImageInstallerImage(workload workload.Workload,
 		img.AdditionalDrivers = installerConfig.AdditionalDrivers
 	}
 
-	img.AdditionalAnacondaModules = []string{"org.fedoraproject.Anaconda.Modules.Users"}
+	instCust, err := customizations.GetInstaller()
+	if err != nil {
+		return nil, err
+	}
+	if instCust != nil && instCust.Modules != nil {
+		img.AdditionalAnacondaModules = append(img.AdditionalAnacondaModules, instCust.Modules.Enable...)
+		img.DisabledAnacondaModules = append(img.DisabledAnacondaModules, instCust.Modules.Disable...)
+	}
+	img.AdditionalAnacondaModules = append(img.AdditionalAnacondaModules, anaconda.ModuleUsers)
 
 	img.SquashfsCompression = "xz"
 

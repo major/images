@@ -3,6 +3,8 @@ package blueprint
 import (
 	"testing"
 
+	"github.com/osbuild/images/internal/common"
+	"github.com/osbuild/images/pkg/customizations/anaconda"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -375,4 +377,137 @@ func TestGetOpenSCAPConfig(t *testing.T) {
 	retOpenSCAPCustomiztions := TestCustomizations.GetOpenSCAP()
 
 	assert.EqualValues(t, expectedOscap, *retOpenSCAPCustomiztions)
+}
+
+func TestGetRPM(t *testing.T) {
+	expectedRPM := RPMCustomization{
+		ImportKeys: &RPMImportKeys{
+			[]string{
+				"/etc/pki/rpm-gpg/RPM-GPG-KEY",
+			},
+		},
+	}
+
+	TestCustomizations := Customizations{
+		RPM: &expectedRPM,
+	}
+
+	retRPM := TestCustomizations.GetRPM()
+	assert.EqualValues(t, expectedRPM, *retRPM)
+
+}
+func TestGetRHSM(t *testing.T) {
+	expectedRHSM := RHSMCustomization{
+		Config: &RHSMConfig{
+			DNFPlugins: &SubManDNFPluginsConfig{
+				ProductID: &DNFPluginConfig{
+					Enabled: common.ToPtr(false),
+				},
+				SubscriptionManager: &DNFPluginConfig{
+					Enabled: common.ToPtr(false),
+				},
+			},
+			SubscriptionManager: &SubManConfig{
+				RHSMConfig: &SubManRHSMConfig{
+					ManageRepos: common.ToPtr(false),
+				},
+				RHSMCertdConfig: &SubManRHSMCertdConfig{
+					AutoRegistration: common.ToPtr(true),
+				},
+			},
+		},
+	}
+
+	TestCustomizations := Customizations{
+		RHSM: &expectedRHSM,
+	}
+
+	retRHSMCustomizations := TestCustomizations.GetRHSM()
+	assert.EqualValues(t, expectedRHSM, *retRHSMCustomizations)
+}
+
+func TestGetInstallerErrors(t *testing.T) {
+	type testCase struct {
+		customizations Customizations
+		expected       string
+	}
+
+	testCases := map[string]testCase{
+		"null": {},
+		"happy": {
+			customizations: Customizations{
+				Installer: &InstallerCustomization{
+					Unattended:   true,
+					SudoNopasswd: []string{"robert", "%admin"},
+					Modules: &AnacondaModules{
+						Enable:  []string{anaconda.ModuleUsers},
+						Disable: []string{anaconda.ModuleSecurity},
+					},
+				},
+			},
+		},
+		"unattended+custom": {
+			customizations: Customizations{
+				Installer: &InstallerCustomization{
+					Unattended:   true,
+					SudoNopasswd: []string{"robert", "%admin"},
+					Modules: &AnacondaModules{
+						Enable:  []string{anaconda.ModuleUsers},
+						Disable: []string{anaconda.ModuleSecurity},
+					},
+					Kickstart: &Kickstart{
+						Contents: "whatevz",
+					},
+				},
+			},
+			expected: "installer.unattended is not supported when adding custom kickstart contents",
+		},
+		"sudo+custom": {
+			customizations: Customizations{
+				Installer: &InstallerCustomization{
+					Unattended:   false,
+					SudoNopasswd: []string{"robert", "%admin"},
+					Modules: &AnacondaModules{
+						Enable:  []string{anaconda.ModuleUsers},
+						Disable: []string{anaconda.ModuleSecurity},
+					},
+					Kickstart: &Kickstart{
+						Contents: "whatevz",
+					},
+				},
+			},
+			expected: "installer.sudo-nopasswd is not supported when adding custom kickstart contents",
+		},
+		"users-disabled": {
+			customizations: Customizations{
+				User: []UserCustomization{
+					{
+						Name: "robert",
+					},
+				},
+				Installer: &InstallerCustomization{
+					Unattended:   false,
+					SudoNopasswd: []string{"robert", "%admin"},
+					Modules: &AnacondaModules{
+						Disable: []string{anaconda.ModuleSecurity, anaconda.ModuleUsers},
+					},
+				},
+			},
+			expected: "blueprint contains user or group customizations but disables the required Users Anaconda module",
+		},
+	}
+
+	for name := range testCases {
+		tc := testCases[name]
+		t.Run(name, func(t *testing.T) {
+			assert := assert.New(t)
+			_, err := tc.customizations.GetInstaller()
+			if tc.expected == "" {
+				// all good
+				assert.NoError(err)
+			} else {
+				assert.EqualError(err, tc.expected)
+			}
+		})
+	}
 }

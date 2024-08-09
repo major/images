@@ -14,6 +14,7 @@ import (
 	"github.com/osbuild/images/pkg/customizations/fsnode"
 	"github.com/osbuild/images/pkg/customizations/oscap"
 	"github.com/osbuild/images/pkg/customizations/shell"
+	"github.com/osbuild/images/pkg/customizations/subscription"
 	"github.com/osbuild/images/pkg/customizations/users"
 	"github.com/osbuild/images/pkg/disk"
 	"github.com/osbuild/images/pkg/osbuild"
@@ -21,7 +22,6 @@ import (
 	"github.com/osbuild/images/pkg/platform"
 	"github.com/osbuild/images/pkg/rhsm/facts"
 	"github.com/osbuild/images/pkg/rpmmd"
-	"github.com/osbuild/images/pkg/subscription"
 )
 
 // OSCustomizations encapsulates all configuration applied to the base
@@ -129,11 +129,11 @@ type OSCustomizations struct {
 	ContainersStorage   *string
 
 	// OpenSCAP config
-	OpenSCAPTailorConfig      *oscap.TailoringConfig
 	OpenSCAPRemediationConfig *oscap.RemediationConfig
 
 	Subscription *subscription.ImageOptions
-	RHSMConfig   map[subscription.RHSMStatus]*osbuild.RHSMStageOptions
+	// The final RHSM config to be applied to the image
+	RHSMConfig *subscription.RHSMConfig
 
 	// Custom directories and files to create in the image
 	Directories []*fsnode.Directory
@@ -255,7 +255,7 @@ func (p *OS) getPackageSetChain(Distro) []rpmmd.PackageSet {
 		// should already have the required packages, but some minimal image
 		// types, like 'tar' don't, so let's add them for the stage to run and
 		// to enable user management in the image.
-		packages = append(packages, "shadow-utils", "pam")
+		packages = append(packages, "shadow-utils", "pam", "passwd")
 
 	}
 
@@ -307,7 +307,7 @@ func (p *OS) getBuildPackages(distro Distro) []string {
 			packages = append(packages, "python3-pyyaml")
 		}
 	}
-	if len(p.DNFConfig) > 0 || len(p.RHSMConfig) > 0 || p.WSLConfig != nil {
+	if len(p.DNFConfig) > 0 || p.RHSMConfig != nil || p.WSLConfig != nil {
 		packages = append(packages, "python3-iniparse")
 	}
 
@@ -324,7 +324,7 @@ func (p *OS) getBuildPackages(distro Distro) []string {
 		packages = append(packages, "skopeo")
 	}
 
-	if p.OpenSCAPTailorConfig != nil {
+	if p.OpenSCAPRemediationConfig != nil && p.OpenSCAPRemediationConfig.TailoringConfig != nil {
 		packages = append(packages, "openscap-utils")
 	}
 
@@ -648,22 +648,18 @@ func (p *OS) serialize() osbuild.Pipeline {
 		}
 		pipeline.AddStage(osbuild.NewSystemdUnitCreateStage(regServiceStageOptions))
 		p.EnabledServices = append(p.EnabledServices, subscribeServiceFile)
-
-		if rhsmConfig, exists := p.RHSMConfig[subscription.RHSMConfigWithSubscription]; exists {
-			pipeline.AddStage(osbuild.NewRHSMStage(rhsmConfig))
-		}
-	} else {
-		if rhsmConfig, exists := p.RHSMConfig[subscription.RHSMConfigNoSubscription]; exists {
-			pipeline.AddStage(osbuild.NewRHSMStage(rhsmConfig))
-		}
 	}
 
-	if waConfig := p.WAAgentConfig; waConfig != nil {
-		pipeline.AddStage(osbuild.NewWAAgentConfStage(waConfig))
+	if p.RHSMConfig != nil {
+		pipeline.AddStage(osbuild.NewRHSMStage(osbuild.NewRHSMStageOptions(p.RHSMConfig)))
 	}
 
-	if udevRules := p.UdevRules; udevRules != nil {
-		pipeline.AddStage(osbuild.NewUdevRulesStage(udevRules))
+	if p.WAAgentConfig != nil {
+		pipeline.AddStage(osbuild.NewWAAgentConfStage(p.WAAgentConfig))
+	}
+
+	if p.UdevRules != nil {
+		pipeline.AddStage(osbuild.NewUdevRulesStage(p.UdevRules))
 	}
 
 	if pt := p.PartitionTable; pt != nil {
@@ -796,8 +792,8 @@ func (p *OS) serialize() osbuild.Pipeline {
 		pipeline.AddStage(osbuild.GenShellInitStage(p.ShellInit))
 	}
 
-	if wslConf := p.WSLConfig; wslConf != nil {
-		pipeline.AddStage(osbuild.NewWSLConfStage(wslConf))
+	if p.WSLConfig != nil {
+		pipeline.AddStage(osbuild.NewWSLConfStage(p.WSLConfig))
 	}
 
 	if p.FIPS {
@@ -807,22 +803,15 @@ func (p *OS) serialize() osbuild.Pipeline {
 		}
 	}
 
-	if p.OpenSCAPTailorConfig != nil {
-		if p.OpenSCAPRemediationConfig == nil {
-			// This is a programming error, since it doesn't make sense
-			// to have tailoring configs without openscap config.
-			panic(fmt.Errorf("OpenSCAP autotailoring cannot be set if no OpenSCAP config has been provided"))
-		}
-
-		tailoringStageOpts := osbuild.NewOscapAutotailorStageOptions(p.OpenSCAPTailorConfig)
-		pipeline.AddStage(osbuild.NewOscapAutotailorStage(tailoringStageOpts))
-	}
-
 	// NOTE: We need to run the OpenSCAP stages as the last stage before SELinux
 	// since the remediation may change file permissions and other aspects of the
 	// hardened image
-	if p.OpenSCAPRemediationConfig != nil {
-		remediationStageOpts := osbuild.NewOscapRemediationStageOptions(oscap.DataDir, p.OpenSCAPRemediationConfig)
+	if remediationConfig := p.OpenSCAPRemediationConfig; remediationConfig != nil {
+		if remediationConfig.TailoringConfig != nil {
+			tailoringStageOpts := osbuild.NewOscapAutotailorStageOptions(remediationConfig)
+			pipeline.AddStage(osbuild.NewOscapAutotailorStage(tailoringStageOpts))
+		}
+		remediationStageOpts := osbuild.NewOscapRemediationStageOptions(oscap.DataDir, remediationConfig)
 		pipeline.AddStage(osbuild.NewOscapRemediationStage(remediationStageOpts))
 	}
 

@@ -5,12 +5,12 @@ import (
 	"fmt"
 
 	"github.com/osbuild/images/internal/common"
-	"github.com/osbuild/images/internal/pathpolicy"
+	"github.com/osbuild/images/pkg/pathpolicy"
 )
 
 type FilesystemCustomization struct {
 	Mountpoint string `json:"mountpoint,omitempty" toml:"mountpoint,omitempty"`
-	MinSize    uint64 `json:"minsize,omitempty" toml:"size,omitempty"`
+	MinSize    uint64 `json:"minsize,omitempty" toml:"minsize,omitempty"`
 }
 
 func (fsc *FilesystemCustomization) UnmarshalTOML(data interface{}) error {
